@@ -131,7 +131,7 @@ def test_fine_tune_smoke(cfg):
       2) создаёт папку final_model с dummy-файлом.
     """
     # Запуск точечного fine-tuning
-    ft.fine_tune_model(cfg, cfg.model_name)
+    ft.fine_tune_model(cfg)
 
     # Проверяем, что модель сохранилась
     final_dir = os.path.join(cfg.save_dir, "final_model")

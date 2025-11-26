@@ -1,12 +1,16 @@
 import json
-import torch
-from torch.utils.data import Dataset
-from transformers import AutoTokenizer
 import os
-from torch.utils.data import DataLoader
+from typing import Dict, Mapping, Sequence
+
+import torch
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoTokenizer
 
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+
+BatchItem = Dict[str, torch.Tensor]
 
 
 class TextDataset(Dataset):
@@ -23,8 +27,10 @@ class TextDataset(Dataset):
             self.data = json.load(f)
 
         # Загружаем список категорий из конфига и создаем маппинг категория -> индекс
-        self.config = config
-        self.label_to_idx = {cat: idx for idx, cat in enumerate(self.config["categories"])}
+        self.config: Mapping[str, Sequence[str]] = config
+        self.label_to_idx: Dict[str, int] = {
+            cat: idx for idx, cat in enumerate(self.config["categories"])
+        }
         self.idx_to_label = {idx: cat for cat, idx in self.label_to_idx.items()}
 
         # Загружаем токенизатор от модели
@@ -44,7 +50,7 @@ class TextDataset(Dataset):
         """ Возвращает количество примеров в датасете. """
         return len(self.texts)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> BatchItem:
         """
         Возвращает токенизированный текст и числовой индекс категории.
 
@@ -76,7 +82,7 @@ class TextDataset(Dataset):
         return self.label_to_idx
 
     @staticmethod
-    def collate_fn(batch):
+    def collate_fn(batch: Sequence[BatchItem]) -> BatchItem:
         """
         Функция объединения батча для DataLoader.
 
@@ -84,21 +90,31 @@ class TextDataset(Dataset):
         :return: словарь с текстами (dict of tensors) и метками (tensor)
         """
         # Извлекаем токенизированные тексты
-        batch_texts = {key: torch.stack([item[key] for item in batch]) for key in batch[0] if key != "labels"}
+        batch_texts = {
+            key: torch.stack([item[key] for item in batch])
+            for key in batch[0]
+            if key != "labels"
+        }
 
         # Извлекаем метки и преобразуем их в тензор
-        batch_labels = torch.tensor([item["labels"] for item in batch], dtype=torch.long)
+        batch_labels = torch.tensor(
+            [item["labels"] for item in batch], dtype=torch.long
+        )
 
         # Создаем итоговый словарь с данными для модели
         batch_texts["labels"] = batch_labels
 
         # Выводим информацию для отладки
-        print(f"batch_texts: {batch_texts}")
-
         return batch_texts
 
 
-def get_dataloader(json_path, config, model_name, batch_size=8, shuffle=True):
+def get_dataloader(
+    json_path: str,
+    config: Mapping[str, Sequence[str]],
+    model_name: str,
+    batch_size: int = 8,
+    shuffle: bool = True,
+) -> DataLoader:
     """
     Создает DataLoader для работы с батчами.
 
@@ -109,5 +125,10 @@ def get_dataloader(json_path, config, model_name, batch_size=8, shuffle=True):
     :param shuffle: перемешивать данные или нет (по умолчанию True).
     :return: DataLoader
     """
-    dataset = TextDataset(json_path, config, model_name)  # Теперь передаем model_name
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=TextDataset.collate_fn)
+    dataset = TextDataset(json_path, config, model_name)
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        collate_fn=TextDataset.collate_fn,
+    )

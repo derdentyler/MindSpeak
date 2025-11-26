@@ -2,6 +2,8 @@ import os
 import yt_dlp
 from typing import Optional
 
+from src.utils.logger_loader import LoggerLoader
+
 class YouTubeScraper:
     """
     Класс для скачивания субтитров с YouTube.
@@ -13,6 +15,7 @@ class YouTubeScraper:
         """
         self.save_path = save_path
         os.makedirs(self.save_path, exist_ok=True)
+        self.logger = LoggerLoader().get_logger()
 
     def download_subtitles(self, video_url: str, lang: str = "ru") -> Optional[str]:
         """
@@ -49,11 +52,13 @@ class YouTubeScraper:
                         if os.path.exists(expected_file):
                             os.remove(expected_file)  # Удаляем старый файл, если он есть
                         os.rename(original_path, expected_file)  # Переименовываем
-                        print(f"✅ Субтитры сохранены: {expected_file}")
+                        self.logger.info(f"✅ Субтитры сохранены: {expected_file}")
                         return expected_file
 
-                print(f"⚠️ Субтитры скачаны, но не удалось найти файл.")
+                self.logger.warning(
+                    "⚠️ Субтитры скачаны, но не удалось найти файл."
+                )
                 return None
             else:
-                print(f"❌ Субтитры на языке '{lang}' не найдены.")
+                self.logger.warning(f"❌ Субтитры на языке '{lang}' не найдены.")
                 return None

@@ -147,6 +147,7 @@ jupyterlab-widgets = "3.0.13"
 notebook = "7.3.2"
 notebook-shim = "0.2.4"
 pywinpty = { version = "2.0.15", markers = "sys_platform == 'win32'" }
+pre-commit = "^3.5.0"
 
 [tool.poetry.scripts]
 pipline = "run:main"
