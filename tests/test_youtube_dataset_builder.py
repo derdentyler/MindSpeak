@@ -70,24 +70,22 @@ def test_youtube_dataset_builder(fake_files, cfg):
     «очистит» их, и сохранит dataset.json.
     """
     builder = YouTubeDatasetBuilder(cfg)
-    # Переназначаем saver
     builder.output_dir = TEST_OUTPUT_DIR
-    builder.saver.output_path = os.path.join(TEST_OUTPUT_DIR, "dataset.json")
-
     builder.build_dataset()
 
-    # Проверяем, что JSON записан и содержит все записи
-    dataset_path = os.path.join(TEST_OUTPUT_DIR, "dataset.json")
-    assert os.path.isfile(dataset_path), "❌ Датасет не был сохранён!"
+    train_path = os.path.join(TEST_OUTPUT_DIR, "train.json")
+    val_path = os.path.join(TEST_OUTPUT_DIR, "val.json")
+    assert os.path.isfile(train_path), "❌ Train датасет не был сохранён!"
+    assert os.path.isfile(val_path), "❌ Val датасет не был сохранён!"
 
-    with open(dataset_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    with open(train_path, "r", encoding="utf-8") as f:
+        train_data = json.load(f)
+    with open(val_path, "r", encoding="utf-8") as f:
+        val_data = json.load(f)
 
-    # Ожидаем ровно sum(len(urls)) элементов
     total_urls = sum(len(urls) for urls in cfg.categories.values())
-    assert len(data) == total_urls
+    assert len(train_data) + len(val_data) == total_urls
 
-    # Каждая запись: dict с 'category' и 'text', и text должен содержать "--cleaned--"
-    for rec in data:
+    for rec in train_data + val_data:
         assert "category" in rec and "text" in rec
         assert rec["text"].endswith("--cleaned--")

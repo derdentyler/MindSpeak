@@ -18,6 +18,7 @@ class DummyDataset:
     """
     def __init__(self, path, cfg_dict, model_name):
         # ничего не читаем из path
+        self.labels = [0, 0]
         pass
 
     def get_label_mapping(self):
@@ -44,7 +45,16 @@ class DummyTrainer:
     Заглушка вместо transformers.Trainer:
     просто помечает, что train() был вызван.
     """
-    def __init__(self, model, args, train_dataset, eval_dataset, data_collator, tokenizer=None):
+    def __init__(
+        self,
+        model,
+        args,
+        train_dataset,
+        eval_dataset,
+        data_collator,
+        tokenizer=None,
+        **kwargs,
+    ):
         self.model = model
         self.args = args
         self.train_dataset = train_dataset
@@ -72,6 +82,7 @@ def patch_everything(monkeypatch, tmp_path):
 
     # 2. Подмена Trainer
     monkeypatch.setattr(ft, "Trainer", DummyTrainer)
+    monkeypatch.setattr(ft, "WeightedTrainer", DummyTrainer)
 
     # 3. Подмена токенизатора — нам он не нужен, просто placeholder
     class DummyTokenizer:
@@ -90,6 +101,8 @@ def patch_everything(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ft.AutoModelForSequenceClassification, "from_pretrained",
                         lambda name, num_labels: DummyModel())
+
+    monkeypatch.setattr(ft, "get_data_collator", lambda tokenizer: lambda batch: batch)
 
     yield
 

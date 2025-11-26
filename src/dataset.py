@@ -2,9 +2,9 @@ import json
 import os
 from typing import Dict, Mapping, Sequence
 
-import torch
-from torch.utils.data import DataLoader, Dataset
-from transformers import AutoTokenizer
+import torch  # type: ignore[import]
+from torch.utils.data import DataLoader, Dataset  # type: ignore[import]
+from transformers import AutoTokenizer, DataCollatorWithPadding  # type: ignore[import]
 
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -63,10 +63,10 @@ class TextDataset(Dataset):
         # Токенизируем текст с padding и truncation
         encoding = self.tokenizer(
             text,
-            padding="max_length",  # Дополняем до max_length, чтобы все примеры были одной длины
-            truncation=True,  # Обрезаем слишком длинные тексты
+            padding=False,
+            truncation=True,
             max_length=self.max_length,
-            return_tensors="pt"  # Возвращаем тензоры PyTorch
+            return_tensors="pt"
         )
 
         # Убираем лишнюю размерность (по умолчанию tokenizer возвращает тензор с размерностью [1, seq_length])
@@ -81,31 +81,14 @@ class TextDataset(Dataset):
         """ Возвращает словарь {категория: индекс}. """
         return self.label_to_idx
 
-    @staticmethod
-    def collate_fn(batch: Sequence[BatchItem]) -> BatchItem:
-        """
-        Функция объединения батча для DataLoader.
-
-        :param batch: список словарей, каждый из которых содержит токенизированный текст и метку
-        :return: словарь с текстами (dict of tensors) и метками (tensor)
-        """
-        # Извлекаем токенизированные тексты
-        batch_texts = {
-            key: torch.stack([item[key] for item in batch])
-            for key in batch[0]
-            if key != "labels"
-        }
-
-        # Извлекаем метки и преобразуем их в тензор
-        batch_labels = torch.tensor(
-            [item["labels"] for item in batch], dtype=torch.long
-        )
-
-        # Создаем итоговый словарь с данными для модели
-        batch_texts["labels"] = batch_labels
-
-        # Выводим информацию для отладки
-        return batch_texts
+def get_data_collator(tokenizer: AutoTokenizer) -> DataCollatorWithPadding:
+    """
+    Создаёт collator с динамическим padding'ом.
+    """
+    return DataCollatorWithPadding(
+        tokenizer=tokenizer,
+        padding=True
+    )
 
 
 def get_dataloader(
@@ -126,9 +109,11 @@ def get_dataloader(
     :return: DataLoader
     """
     dataset = TextDataset(json_path, config, model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    collator = get_data_collator(tokenizer)
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        collate_fn=TextDataset.collate_fn,
+        collate_fn=collator,
     )

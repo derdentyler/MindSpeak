@@ -1,6 +1,9 @@
 import os
 import re
-from typing import Dict, List, TypedDict
+from collections import Counter
+from typing import Dict, List, Tuple, TypedDict
+
+from sklearn.model_selection import train_test_split
 
 from transformers import AutoTokenizer
 
@@ -34,7 +37,10 @@ class YouTubeDatasetBuilder:
 
         self.output_dir: str = cfg.output_dir
         os.makedirs(self.output_dir, exist_ok=True)
-        self.saver = DatasetSaver(os.path.join(self.output_dir, "dataset.json"))
+        self.train_saver = DatasetSaver(os.path.join(self.output_dir, "train.json"))
+        self.val_saver = DatasetSaver(os.path.join(self.output_dir, "val.json"))
+        self.val_split_ratio: float = cfg.val_split_ratio
+        self.random_state: int = cfg.random_state
 
         # для токенизации при чанкинге
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
@@ -59,6 +65,43 @@ class YouTubeDatasetBuilder:
             chunk_text = re.sub(r"\s*-\s*-\s*", "--", chunk_text.strip())
             chunks.append(chunk_text)
         return chunks
+
+    def _split_dataset(
+        self,
+        dataset: List[DatasetEntry]
+    ) -> Tuple[List[DatasetEntry], List[DatasetEntry]]:
+        """
+        Стратифицированный split полной выборки на train и val.
+        """
+        if not dataset:
+            return [], []
+
+        categories = [item["category"] for item in dataset]
+        counts = Counter(categories)
+        min_samples = min(counts.values())
+
+        if min_samples < 2:
+            self.logger.warning(
+                "Некоторые классы имеют < 2 примеров, стратификация может не сработать."
+            )
+            split_idx = int(len(dataset) * (1 - self.val_split_ratio))
+            return dataset[:split_idx], dataset[split_idx:]
+
+        try:
+            train_data, val_data = train_test_split(
+                dataset,
+                test_size=self.val_split_ratio,
+                random_state=self.random_state,
+                stratify=categories
+            )
+            self.logger.info(
+                f"Split completed: train={len(train_data)}, val={len(val_data)}"
+            )
+            return train_data, val_data
+        except ValueError as exc:
+            self.logger.error(f"Ошибка стратификации: {exc}")
+            split_idx = int(len(dataset) * (1 - self.val_split_ratio))
+            return dataset[:split_idx], dataset[split_idx:]
 
     def build_dataset(self) -> None:
         dataset: List[DatasetEntry] = []
@@ -106,8 +149,11 @@ class YouTubeDatasetBuilder:
         # 5) Сохранение
         if dataset:
             try:
-                self.saver.save(dataset)
-                self.logger.info(f"✅ Датасет сохранён в {self.output_dir}")
+                train_data, val_data = self._split_dataset(dataset)
+                self.train_saver.save(train_data)
+                self.logger.info(f"✅ Train датасет сохранён в {self.output_dir}/train.json")
+                self.val_saver.save(val_data)
+                self.logger.info(f"✅ Val датасет сохранён в {self.output_dir}/val.json")
             except Exception as e:
                 self.logger.error(f"Ошибка сохранения: {e}")
         else:

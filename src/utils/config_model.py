@@ -43,6 +43,10 @@ class AppConfig(BaseModel):
 
     categories: Dict[str, List[str]]
 
+    random_state: int = 42
+    val_split_ratio: float = 0.2
+    use_class_weights: bool = True
+
     # позволяем тестам не иметь этой секции
     augmentation: Optional[AugmentationConfig] = None
 

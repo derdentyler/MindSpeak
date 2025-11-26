@@ -1,17 +1,93 @@
 import os
+import random
+
+import numpy as np  # type: ignore[import]
 import torch  # type: ignore[import]
+from sklearn.metrics import (  # type: ignore[import]
+    accuracy_score,
+    f1_score,
+    precision_recall_fscore_support
+)
+from sklearn.utils.class_weight import compute_class_weight  # type: ignore[import]
 from transformers import (  # type: ignore[import]
-    AutoTokenizer,
     AutoModelForSequenceClassification,
+    AutoTokenizer,
     Trainer,
-    TrainingArguments
-)  # type: ignore[import]
+    TrainingArguments,
+    set_seed,
+)
 from peft import LoraConfig, get_peft_model, TaskType  # type: ignore[import]
-from src.dataset import TextDataset
+from src.dataset import TextDataset, get_data_collator
 from src.utils.logger_loader import LoggerLoader
 from src.utils.config_model import AppConfig  # импорт Pydantic-модели
 
 logger = LoggerLoader().get_logger()
+
+def set_all_seeds(seed: int = 42) -> None:
+    """
+    Устанавливает seed для всех генераторов случайных чисел.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    set_seed(seed)
+    logger.info(f"Random seed установлен: {seed}")
+
+
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    predictions = np.argmax(logits, axis=-1)
+    accuracy = accuracy_score(labels, predictions)
+    f1_weighted = f1_score(labels, predictions, average="weighted")
+    f1_macro = f1_score(labels, predictions, average="macro")
+    precision, recall, _, _ = precision_recall_fscore_support(
+        labels, predictions, average="weighted"
+    )
+    return {
+        "accuracy": accuracy,
+        "f1_weighted": f1_weighted,
+        "f1_macro": f1_macro,
+        "precision": precision,
+        "recall": recall,
+    }
+
+
+def compute_class_weights(train_dataset: TextDataset) -> torch.Tensor:
+    labels = train_dataset.labels
+    num_classes = len(train_dataset.get_label_mapping())
+    class_weights = compute_class_weight(
+        class_weight="balanced",
+        classes=np.arange(num_classes),
+        y=labels,
+    )
+    weights_tensor = torch.tensor(class_weights, dtype=torch.float32)
+    logger.info(f"Class weights computed: {weights_tensor}")
+    return weights_tensor
+
+
+class WeightedTrainer(Trainer):
+    def __init__(self, *args, class_weights=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.class_weights = class_weights
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.get("logits")
+        loss_fct = torch.nn.CrossEntropyLoss()
+        if self.class_weights is not None:
+            loss_fct = torch.nn.CrossEntropyLoss(
+                weight=self.class_weights.to(model.device)
+            )
+        loss = loss_fct(
+            logits.view(-1, self.model.config.num_labels),
+            labels.view(-1),
+        )
+        return (loss, outputs) if return_outputs else loss
+
 
 def fine_tune_model(cfg: AppConfig) -> None:
     """
@@ -26,6 +102,7 @@ def fine_tune_model(cfg: AppConfig) -> None:
     при включённой LoRA также сохраняет адаптеры отдельно.
     """
     logger.info("Starting fine-tuning process...")
+    set_all_seeds(cfg.random_state)
 
     # ========== Настройки из конфига ==========
     # Конфигурация LoRA и пути сохранения берутся из cfg
@@ -45,6 +122,9 @@ def fine_tune_model(cfg: AppConfig) -> None:
     train_ds = TextDataset(cfg.train_data_path, cfg.model_dump(), cfg.model_name)
     val_ds   = TextDataset(cfg.val_data_path,   cfg.model_dump(), cfg.model_name)
     num_labels = len(train_ds.get_label_mapping())
+    class_weights = (
+        compute_class_weights(train_ds) if cfg.use_class_weights else None
+    )
 
     # ========== Токенизатор и модель ==========
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
@@ -85,16 +165,22 @@ def fine_tune_model(cfg: AppConfig) -> None:
         logging_steps=cfg.logging_steps,
         save_total_limit=cfg.save_total_limit,
         push_to_hub=False,
+        load_best_model_at_end=True,
+        metric_for_best_model="f1_weighted",
+        greater_is_better=True,
     )
 
-    # ========== Trainer ==========
-    trainer = Trainer(
+    data_collator = get_data_collator(tokenizer)
+
+    trainer = WeightedTrainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
-        data_collator=TextDataset.collate_fn,
+        data_collator=data_collator,
         tokenizer=tokenizer,
+        compute_metrics=compute_metrics,
+        class_weights=class_weights,
     )
 
     # ========== Запуск обучения ==========
