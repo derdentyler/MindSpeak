@@ -49,7 +49,7 @@ def main():
 
     if args.task == "scrape":
         logger.info("Running data scraper...")
-        builder = YouTubeDatasetBuilder(args.config)
+        builder = YouTubeDatasetBuilder(cfg)
         builder.build_dataset()
 
     elif args.task == "eda":
@@ -57,7 +57,7 @@ def main():
 
     elif args.task == "train":
         logger.info("Starting fine-tuning...")
-        fine_tune_model(args.config, cfg.model_name)
+        fine_tune_model(cfg)
 
     elif args.task == "augment":
         logger.info("Starting data augmentation (back-translation)…")

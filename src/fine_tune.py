@@ -1,26 +1,34 @@
 import os
-import torch
-from transformers import (
+import torch  # type: ignore[import]
+from transformers import (  # type: ignore[import]
     AutoTokenizer,
     AutoModelForSequenceClassification,
     Trainer,
     TrainingArguments
-)
-from peft import LoraConfig, get_peft_model, TaskType
+)  # type: ignore[import]
+from peft import LoraConfig, get_peft_model, TaskType  # type: ignore[import]
 from src.dataset import TextDataset
 from src.utils.logger_loader import LoggerLoader
 from src.utils.config_model import AppConfig  # импорт Pydantic-модели
 
 logger = LoggerLoader().get_logger()
 
-def fine_tune_model(cfg: AppConfig, model_name: str):
+def fine_tune_model(cfg: AppConfig) -> None:
     """
-    cfg: AppConfig — валидированный конфиг из ConfigLoader().get_config()
-    model_name: str — имя модели или путь, можно переопределить через CLI
+    Запускает fine-tuning классификатора на основе LLM с опциональным LoRA.
+
+    :param cfg: проверенный AppConfig, в котором заданы:
+        * model_name, пути train/val, директория сохранения
+        * параметры LoRA (use_lora, lora_r, lora_alpha, lora_dropout)
+        * гиперпараметры обучения (batch_size, num_epochs, learning_rate, weight_decay, logging_steps, save_total_limit)
+    :return: None
+    Побочные эффекты: создаёт `Trainer`, обучает модель, сохраняет результаты в `cfg.save_dir`,
+    при включённой LoRA также сохраняет адаптеры отдельно.
     """
     logger.info("Starting fine-tuning process...")
 
     # ========== Настройки из конфига ==========
+    # Конфигурация LoRA и пути сохранения берутся из cfg
     use_lora     = cfg.use_lora
     lora_r       = cfg.lora_r
     lora_alpha   = cfg.lora_alpha
@@ -33,17 +41,18 @@ def fine_tune_model(cfg: AppConfig, model_name: str):
     logger.info(f"Using device: {device}")
 
     # ========== Датасеты ==========
-    train_ds = TextDataset(cfg.train_data_path, cfg.model_dump(), model_name)
-    val_ds   = TextDataset(cfg.val_data_path,   cfg.model_dump(), model_name)
+    # Датасеты строим на основе путей из cfg и токенизатора той же модели
+    train_ds = TextDataset(cfg.train_data_path, cfg.model_dump(), cfg.model_name)
+    val_ds   = TextDataset(cfg.val_data_path,   cfg.model_dump(), cfg.model_name)
     num_labels = len(train_ds.get_label_mapping())
 
     # ========== Токенизатор и модель ==========
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
     model     = AutoModelForSequenceClassification.from_pretrained(
-        model_name,
+        cfg.model_name,
         num_labels=num_labels
     )
-    logger.info(f"Loaded base model: {model_name}")
+    logger.info(f"Loaded base model: {cfg.model_name}")
 
     # ========== Применение LoRA (PEFT) ==========
     if use_lora:
@@ -53,6 +62,7 @@ def fine_tune_model(cfg: AppConfig, model_name: str):
             r=lora_r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
+            # LoRA таргетирует проекции q/v, наиболее влияющие на attention
             target_modules=["q_proj", "v_proj"],
             bias="none"
         )
@@ -61,6 +71,7 @@ def fine_tune_model(cfg: AppConfig, model_name: str):
     model.to(device)
 
     # ========== Аргументы тренировки ==========
+    # Все гиперпараметры обучения подаются из конфигурации
     training_args = TrainingArguments(
         output_dir=save_dir,
         eval_strategy="epoch",

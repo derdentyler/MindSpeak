@@ -1,6 +1,6 @@
 import os
 import re
-from typing import List, Dict
+from typing import Dict, List, TypedDict
 
 from transformers import AutoTokenizer
 
@@ -9,6 +9,11 @@ from src.subtitle_preprocessor import SubtitlePreprocessor
 from src.dataset_saver import DatasetSaver
 from src.utils.logger_loader import LoggerLoader
 from src.utils.config_model import AppConfig
+
+
+class DatasetEntry(TypedDict):
+    category: str
+    text: str
 
 
 class YouTubeDatasetBuilder:
@@ -21,9 +26,6 @@ class YouTubeDatasetBuilder:
     def __init__(self, cfg: AppConfig):
         self.cfg: AppConfig = cfg
         self.logger = LoggerLoader().get_logger()
-
-        if not self.cfg:
-            raise ValueError("❌ Конфиг не загружен")
 
         # директории
         self.subtitle_dir: str = cfg.subtitles_dir
@@ -59,7 +61,7 @@ class YouTubeDatasetBuilder:
         return chunks
 
     def build_dataset(self) -> None:
-        dataset: List[Dict[str, str]] = []
+        dataset: List[DatasetEntry] = []
 
         for category, urls in self.cfg.categories.items():
             for url in urls:
@@ -94,10 +96,7 @@ class YouTubeDatasetBuilder:
 
                     # 4) Разбивка на чанки и добавление в датасет
                     for chunk in self._chunk_text(text):
-                        dataset.append({
-                            "category": category,
-                            "text": chunk
-                        })
+                        dataset.append(DatasetEntry(category=category, text=chunk))
 
                 except Exception as e:
                     self.logger.exception(f"Ошибка обработки {url}: {e}")
@@ -121,8 +120,3 @@ class YouTubeDatasetBuilder:
             for it in self.skipped_videos:
                 self.logger.warning(f"   ❌ {it['url']} — {it['reason']}")
 
-        print(f"\n📊 Статистика: {self.downloaded_subtitles}/{self.total_videos} видео")
-        if self.skipped_videos:
-            print("⚠️ Пропущенные видео:")
-            for it in self.skipped_videos:
-                print(f"   ❌ {it['url']} — {it['reason']}")
